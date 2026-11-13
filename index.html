@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="es" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Finanzas">
+    <meta name="theme-color" content="#0f172a">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="icon-180.png">
+    <title>Control de Finanzas</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .card { background-color: #1e293b; border: 1px solid #334155; }
+        .form-control, .form-select { background-color: #0f172a; border-color: #334155; color: #fff; }
+        .form-control:focus { border-color: #0dcaf0; box-shadow: 0 0 0 0.25rem rgba(13, 202, 240, 0.25); }
+        .kpi-value { font-family: 'Consolas', monospace; font-size: 1.4rem; font-weight: 700; }
+        .text-xs { font-size: 0.75rem; }
+        .nav-pills .nav-link.active { background-color: #0d6efd; color: white; }
+        .nav-pills .nav-link { color: #94a3b8; cursor: pointer; transition: all 0.2s; }
+        .nav-pills .nav-link:hover { color: #fff; background-color: #334155; }
+        .progress { background-color: #0f172a; height: 10px; border-radius: 5px; }
+        .chart-box { position: relative; height: 100%; min-height: 280px; }
+
+        /* --- Ajustes para celular --- */
+        @media (max-width: 767.98px) {
+            body { padding: .5rem !important; padding-bottom: calc(.5rem + env(safe-area-inset-bottom)) !important; }
+            /* 16px evita que iOS haga zoom al enfocar un campo */
+            .form-control, .form-select, .form-control-sm, .form-select-sm,
+            .input-group-sm > .form-control { font-size: 16px; min-height: 42px; }
+            .btn-sm, .btn-group-sm > .btn { padding: .45rem .75rem; }
+            .kpi-value { font-size: 1.05rem; }
+            .toolbar { width: 100%; }
+            #dataTable td { padding: .5rem .35rem; }
+        }
+    </style>
+</head>
+<body class="p-3">
+
+<div class="container-fluid mw-1400">
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-center mb-4 gap-3">
+        <div>
+            <h3 class="fw-bold mb-0"><i class="bi bi-wallet2 text-primary"></i> Control de Finanzas</h3>
+            <small class="text-muted" id="storageInfo">Modo: LocalStorage</small>
+        </div>
+        
+        <div class="toolbar d-flex flex-wrap gap-2 align-items-center justify-content-center bg-dark p-2 rounded border border-secondary">
+            <ul class="nav nav-pills nav-sm" id="viewMode">
+                <li class="nav-item"><a class="nav-link active" onclick="app.switchView('monthly')">Mensual</a></li>
+                <li class="nav-item"><a class="nav-link" onclick="app.switchView('debts')">Deudas</a></li>
+                <li class="nav-item"><a class="nav-link" onclick="app.switchView('annual')">Anual</a></li>
+            </ul>
+            
+            <div class="vr mx-2 text-secondary d-none d-md-block"></div>
+
+            <input type="month" id="filterMonth" class="form-control form-control-sm w-auto" onchange="app.render()">
+
+            <div class="btn-group btn-group-sm">
+                <button onclick="app.syncNow()" class="btn btn-info fw-bold text-dark" title="Leer el JSON de iCloud y combinarlo con este dispositivo"><i class="bi bi-arrow-repeat"></i> Sincronizar</button>
+                <button onclick="app.downloadJSON()" class="btn btn-outline-info" title="Guardar el JSON (en celular: Guardar en Archivos)"><i class="bi bi-download"></i> Guardar</button>
+                <input type="file" id="uploadJson" accept=".json,application/json" style="display:none" onchange="app.uploadJSON(this)">
+            </div>
+            <button onclick="app.exportExcel()" class="btn btn-success btn-sm fw-bold">XLSX</button>
+        </div>
+    </div>
+
+    <div id="viewMonthly">
+        <div class="row g-3 mb-4">
+            <div class="col-6 col-md-3">
+                <div class="card p-3 border-start border-4 border-success">
+                    <div class="text-secondary text-uppercase text-xs fw-bold">Ingresos</div>
+                    <div class="kpi-value text-success" id="kpiIng">0</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card p-3 border-start border-4 border-danger">
+                    <div class="text-secondary text-uppercase text-xs fw-bold">Deducciones</div>
+                    <div class="kpi-value text-danger" id="kpiDed">0</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card p-3 border-start border-4 border-warning">
+                    <div class="text-secondary text-uppercase text-xs fw-bold">Gastos</div>
+                    <div class="kpi-value text-warning" id="kpiGas">0</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card p-3 bg-primary bg-opacity-10 border-start border-4 border-primary">
+                    <div class="text-primary text-uppercase text-xs fw-bold">Disponible Mes</div>
+                    <div class="kpi-value text-white" id="kpiNet">0</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4">
+            <div class="col-lg-8">
+                <div class="card mb-3">
+                    <div class="card-header py-2 fw-bold small"><i class="bi bi-plus-circle"></i> Nuevo Movimiento</div>
+                    <div class="card-body py-3">
+                        <form onsubmit="app.addTransaction(event)" class="row g-2">
+                            <div class="col-6 col-md-2"><input type="date" id="tDate" class="form-control form-control-sm" required></div>
+                            <div class="col-6 col-md-2">
+                                <select id="tType" class="form-select form-select-sm" required onchange="app.updateCategories()">
+                                    <option value="gasto">🔴 Gasto</option>
+                                    <option value="ingreso">🟢 Ingreso</option>
+                                    <option value="deduccion">🔻 Deducción</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3"><select id="tCat" class="form-select form-select-sm" required></select></div>
+                            <div class="col-md-3"><input type="text" id="tDesc" class="form-control form-control-sm" placeholder="Descripción..." required></div>
+                            <div class="col-md-2">
+                                <div class="input-group input-group-sm">
+                                    <input type="number" id="tAmount" class="form-control" placeholder="$" inputmode="decimal" step="any" min="0" required>
+                                    <button type="submit" class="btn btn-primary">Agregar</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="card" style="height: 400px; overflow-y: auto;">
+                    <table class="table table-dark table-hover mb-0 align-middle small sticky-top">
+                        <thead class="table-secondary text-xs">
+                            <tr><th>Día</th><th>Categoria</th><th>Descripción</th><th class="text-end">Monto</th><th></th></tr>
+                        </thead>
+                        <tbody id="dataTable"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="col-lg-4">
+                <div class="card h-100">
+                    <div class="card-header border-bottom border-secondary text-center small fw-bold">Distribución Gastos</div>
+                    <div class="card-body">
+                        <div class="chart-box"><canvas id="monthlyChart"></canvas></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="viewDebts" style="display: none;">
+        <div class="row g-4">
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header fw-bold text-info"><i class="bi bi-bank"></i> Registrar Nueva Deuda</div>
+                    <div class="card-body">
+                        <form onsubmit="app.addDebt(event)">
+                            <div class="mb-3">
+                                <label class="small text-muted">Acreedor / Concepto</label>
+                                <input type="text" id="dName" class="form-control" placeholder="Ej: Tarjeta Visa, Crédito Libre..." required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="small text-muted">Monto Total de la Deuda</label>
+                                <input type="number" id="dTotal" class="form-control" placeholder="$" inputmode="decimal" step="any" min="0" required>
+                            </div>
+                            <button type="submit" class="btn btn-info w-100 fw-bold text-dark">Crear Deuda</button>
+                        </form>
+                        <div class="mt-4 text-xs text-muted">
+                            <i class="bi bi-info-circle"></i> Al crear una deuda, solo se registra el saldo pendiente. Usa "Abonar" para registrar los pagos.
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card mt-3 border-info">
+                    <div class="card-body text-center">
+                        <small class="text-info text-uppercase fw-bold">Deuda Total Pendiente</small>
+                        <div class="display-6 fw-bold text-white" id="totalDebtPending">$0</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-8">
+                <div class="card h-100">
+                    <div class="card-header fw-bold">Mis Pasivos Activos</div>
+                    <div class="card-body p-0" style="max-height: 600px; overflow-y: auto;">
+                        <div id="debtsList" class="p-3 d-flex flex-column gap-3">
+                            </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="viewAnnual" style="display: none;">
+        <div class="card p-3 mb-4">
+            <h5 class="fw-bold text-center text-primary mb-3">Evolución Anual y Saldo Acumulado</h5>
+            <div style="height: 300px; width: 100%;"><canvas id="annualChart"></canvas></div>
+        </div>
+        <div class="card">
+            <div class="card-header fw-bold">Detalle Mensual (Flujo de Caja)</div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-dark table-striped mb-0 text-center small">
+                        <thead>
+                            <tr>
+                                <th>Mes</th>
+                                <th class="text-success">Ingresos Totales</th>
+                                <th class="text-danger">Deducciones</th>
+                                <th class="text-warning">Gastos</th>
+                                <th>Resultado Mes</th>
+                                <th class="table-active border-start border-secondary fw-bold">💰 Saldo Acumulado</th>
+                            </tr>
+                        </thead>
+                        <tbody id="annualTable"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<div class="modal fade" id="paymentModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title">Realizar Abono a Capital</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small">Esto reducirá tu deuda y opcionalmente creará un registro de gasto en el mes actual.</p>
+                <input type="hidden" id="payDebtId">
+                <div class="mb-3">
+                    <label class="form-label">Monto a Pagar</label>
+                    <input type="number" id="payAmount" class="form-control text-white" style="background:#0f172a" inputmode="decimal" step="any" min="0">
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="payCreateExpense" checked>
+                    <label class="form-check-label text-white-50" for="payCreateExpense">
+                        Registrar también como "Gasto" en el mes actual (Recomendado)
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-success btn-sm" onclick="app.processPayment()">Confirmar Pago</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// --- Utilidades ---
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// Fecha local (toISOString usa UTC y en Colombia cambia de día a las 7 p.m.)
+const localISO = (d = new Date()) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+// Almacenamiento tolerante: si el visor (app de iPhone, vista previa) bloquea localStorage,
+// se trabaja en memoria y el JSON de iCloud pasa a ser la única copia.
+const store = {
+    mem: {}, ok: true,
+    get(k) { try { return localStorage.getItem(k); } catch (e) { this.ok = false; return k in this.mem ? this.mem[k] : null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) { this.ok = false; this.mem[k] = v; } }
+};
+const EMPTY_STATE ={ transactions: [], debts: [], deleted: [] };
+
+// Mini almacén IndexedDB: guarda el enlace al archivo JSON (solo navegadores de escritorio)
+const idb = {
+    open: () => new Promise((res, rej) => {
+        const r = indexedDB.open('finanzas_sync', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('kv');
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+    }),
+    run: async (mode, fn) => {
+        const db = await idb.open();
+        return new Promise((res, rej) => {
+            const q = fn(db.transaction('kv', mode).objectStore('kv'));
+            q.onsuccess = () => res(q.result);
+            q.onerror = () => rej(q.error);
+        });
+    },
+    get: (k) => idb.run('readonly', s => s.get(k)),
+    set: (k, v) => idb.run('readwrite', s => s.put(v, k)),
+    del: (k) => idb.run('readwrite', s => s.delete(k))
+};
+
+const app = {
+    data: [],    // Transacciones normales
+    debts: [],   // Estructura para Deudas
+    deleted: [], // IDs eliminados (para que un borrado se propague al sincronizar)
+    meta: { lastChange: 0, lastSync: 0 },
+    fileHandle: null, // Archivo JSON enlazado (Chrome/Edge de escritorio)
+    hasFSA: 'showOpenFilePicker' in window,
+    autoSaveTimer: null,
+    syncing: false,
+    currentView: 'monthly',
+    monthlyChart: null,
+    annualChart: null,
+    
+    // Categorías
+    categories: {
+        ingreso: ['Salario', 'Primas', 'Inversiones', 'Reembolsos', 'Otros'],
+        deduccion: ['Salud/Pensión', 'Retención Fuente', 'Fondo Solidaridad', 'Libranzas', 'Otros'],
+        gasto: ['Hogar', 'Alimentación', 'Transporte', 'Servicios', 'Deuda (Cuota)', 'Educación', 'Moda', 'Tecnología', 'Ocio', 'Salud', 'Cuidado Personal', 'Impuestos', 'Otros']
+    },
+
+    init: () => {
+        // Cargar Transacciones
+        const storedData = store.get('sysadmin_finances_v2');
+        if (storedData) app.data = JSON.parse(storedData);
+        
+        // Cargar Deudas (Nuevo Key)
+        const storedDebts = store.get('sysadmin_finances_debts');
+        if (storedDebts) app.debts = JSON.parse(storedDebts);
+
+        const storedDeleted = store.get('sysadmin_finances_deleted');
+        if (storedDeleted) app.deleted = JSON.parse(storedDeleted);
+        const storedMeta = store.get('sysadmin_finances_meta');
+        if (storedMeta) app.meta = JSON.parse(storedMeta);
+
+        // Configurar fechas
+        const today = localISO();
+        document.getElementById('tDate').value = today;
+        document.getElementById('filterMonth').value = today.slice(0, 7);
+
+        app.updateCategories();
+        app.render();
+        app.updateStatus();
+
+        // Recuperar el archivo enlazado y sincronizar al abrir / al volver a la pestaña
+        if (app.hasFSA) {
+            idb.get('handle').then(h => {
+                app.fileHandle = h || null;
+                app.updateStatus();
+                app.backgroundSync();
+            }).catch(() => {});
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') app.backgroundSync();
+            });
+        }
+    },
+
+    // Escribe en el dispositivo y repinta (sin marcar cambios)
+    persist: () => {
+        store.set('sysadmin_finances_v2', JSON.stringify(app.data));
+        store.set('sysadmin_finances_debts', JSON.stringify(app.debts));
+        store.set('sysadmin_finances_deleted', JSON.stringify(app.deleted));
+        store.set('sysadmin_finances_meta', JSON.stringify(app.meta));
+        app.render();
+        app.updateStatus();
+    },
+
+    // Guardar un cambio hecho por el usuario
+    save: () => {
+        app.meta.lastChange = Date.now();
+        app.persist();
+        clearTimeout(app.autoSaveTimer);
+        app.autoSaveTimer = setTimeout(app.backgroundSync, 800);
+    },
+
+    // --- SINCRONIZACIÓN CON EL JSON DE ICLOUD ---
+    snapshot: () => ({
+        version: '4.0',
+        savedAt: new Date().toISOString(),
+        transactions: app.data,
+        debts: app.debts,
+        deleted: app.deleted
+    }),
+
+    parseBackup: (text) => {
+        const json = JSON.parse(text);
+        if (Array.isArray(json)) return { transactions: json, debts: [], deleted: [] }; // Versión vieja
+        if (json && Array.isArray(json.transactions)) {
+            return { transactions: json.transactions, debts: json.debts || [], deleted: json.deleted || [] };
+        }
+        throw new Error('Formato de backup no reconocido');
+    },
+
+    // Une dos estados por ID: no se pierde nada de ninguno de los dos dispositivos
+    mergeStates: (a, b) => {
+        const del = new Set([...a.deleted, ...b.deleted]);
+        const tx = new Map();
+        [...b.transactions, ...a.transactions].forEach(t => tx.set(t.id, t));
+        const debts = new Map();
+        [...a.debts, ...b.debts].forEach(d => {
+            const cur = debts.get(d.id);
+            const newer = cur && ((d.updatedAt || 0) > (cur.updatedAt || 0) ||
+                ((d.updatedAt || 0) === (cur.updatedAt || 0) && d.paid > cur.paid));
+            if (!cur || newer) debts.set(d.id, d);
+        });
+        const clean = (m) => [...m.values()].filter(x => !del.has(x.id)).sort((x, y) => x.id - y.id);
+        return { transactions: clean(tx), debts: clean(debts), deleted: [...del].sort((x, y) => x - y) };
+    },
+
+    // Combina el contenido de un archivo con lo local. Devuelve true si el archivo ya estaba al día.
+    applyRemote: (text) => {
+        const remote = app.parseBackup(text);
+        const local = { transactions: app.data, debts: app.debts, deleted: app.deleted };
+        const merged = app.mergeStates(local, remote);
+        const fp = (s) => JSON.stringify([s.transactions, s.debts, s.deleted]);
+        const fileIsCurrent = fp(merged) === fp(app.mergeStates(remote, EMPTY_STATE));
+        app.data = merged.transactions;
+        app.debts = merged.debts;
+        app.deleted = merged.deleted;
+        return fileIsCurrent;
+    },
+
+    // Botón "Sincronizar"
+    syncNow: async () => {
+        if (!app.hasFSA) {
+            // Celular / Safari / Firefox: elegir el JSON desde Archivos (iCloud Drive)
+            document.getElementById('uploadJson').click();
+            return;
+        }
+        try {
+            if (!app.fileHandle) {
+                [app.fileHandle] = await window.showOpenFilePicker({
+                    types: [{ description: 'Backup de finanzas (JSON)', accept: { 'application/json': ['.json'] } }]
+                });
+                await idb.set('handle', app.fileHandle);
+            }
+            if ((await app.fileHandle.requestPermission({ mode: 'readwrite' })) !== 'granted') {
+                return alert('Se necesita permiso de escritura sobre el archivo para sincronizar.');
+            }
+            await app.syncFile();
+        } catch (err) {
+            if (err.name !== 'AbortError') alert('No se pudo sincronizar: ' + err.message);
+            app.updateStatus();
+        }
+    },
+
+    // Leer archivo enlazado -> combinar -> volver a escribirlo
+    syncFile: async () => {
+        if (app.syncing) return;
+        app.syncing = true;
+        try {
+            const text = await (await app.fileHandle.getFile()).text();
+            if (text.trim()) app.applyRemote(text); // Si el archivo está dañado, lanza error y NO se sobrescribe
+            const w = await app.fileHandle.createWritable();
+            await w.write(JSON.stringify(app.snapshot(), null, 2));
+            await w.close();
+            app.meta.lastSync = Date.now();
+            app.persist();
+        } finally {
+            app.syncing = false;
+        }
+    },
+
+    // Sincronización silenciosa (solo si el navegador ya tiene permiso sobre el archivo)
+    backgroundSync: async () => {
+        if (!app.fileHandle) return;
+        try {
+            if ((await app.fileHandle.queryPermission({ mode: 'readwrite' })) === 'granted') await app.syncFile();
+        } catch (err) { console.warn('Sincronización pendiente:', err); }
+        app.updateStatus();
+    },
+
+    unlinkFile: async () => {
+        app.fileHandle = null;
+        try { await idb.del('handle'); } catch (err) {}
+        app.updateStatus();
+    },
+
+    updateStatus: () => {
+        const el = document.getElementById('storageInfo');
+        const pending = app.meta.lastChange > app.meta.lastSync;
+        const time = app.meta.lastSync
+            ? new Date(app.meta.lastSync).toLocaleString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+            : '';
+        if (app.fileHandle) {
+            el.innerHTML = `<i class="bi bi-cloud-check"></i> ${esc(app.fileHandle.name)} · ` +
+                (pending ? '<span class="text-warning">cambios pendientes, toca Sincronizar</span>' : `sincronizado ${time}`) +
+                ` · <a href="#" class="text-muted" onclick="app.unlinkFile();return false">desvincular</a>`;
+        } else if (pending) {
+            el.innerHTML = '<span class="text-warning"><i class="bi bi-exclamation-triangle"></i> Cambios sin guardar en el archivo de iCloud</span>';
+        } else {
+            el.innerHTML = time ? `<i class="bi bi-cloud-check"></i> Al día con el archivo · ${time}`
+                : (app.data.length || app.debts.length ? 'Datos solo en este dispositivo'
+                    : '<span class="text-warning"><i class="bi bi-cloud-download"></i> Sin datos aquí: toca Sincronizar y elige tu JSON de iCloud</span>');
+        }
+        if (!store.ok) {
+            el.innerHTML += '<br><span class="text-warning">Este visor no guarda datos: sincroniza al abrir y toca Guardar antes de cerrar</span>';
+        }
+    },
+
+    switchView: (view) => {
+        app.currentView = view;
+        // Tabs Styles
+        document.querySelectorAll('#viewMode .nav-link').forEach(el => el.classList.remove('active'));
+        const activeLink = Array.from(document.querySelectorAll('#viewMode .nav-link')).find(el => el.getAttribute('onclick').includes(view));
+        if(activeLink) activeLink.classList.add('active');
+        
+        // Mostrar secciones
+        ['viewMonthly', 'viewDebts', 'viewAnnual'].forEach(id => document.getElementById(id).style.display = 'none');
+        
+        if(view === 'monthly') document.getElementById('viewMonthly').style.display = 'block';
+        if(view === 'debts') document.getElementById('viewDebts').style.display = 'block';
+        if(view === 'annual') document.getElementById('viewAnnual').style.display = 'block';
+        
+        // Ocultar filtro de mes en Deudas/Anual para limpieza visual
+        document.getElementById('filterMonth').style.visibility = (view === 'monthly') ? 'visible' : 'hidden';
+
+        app.render();
+    },
+
+    // --- LÓGICA DE TRANSACCIONES ---
+    updateCategories: () => {
+        const type = document.getElementById('tType').value;
+        const catSelect = document.getElementById('tCat');
+        catSelect.innerHTML = app.categories[type].map(c => `<option value="${c}">${c}</option>`).join('');
+    },
+
+    addTransaction: (e) => {
+        e.preventDefault();
+        const newItem = {
+            id: Date.now(),
+            date: document.getElementById('tDate').value,
+            type: document.getElementById('tType').value,
+            cat: document.getElementById('tCat').value,
+            desc: document.getElementById('tDesc').value,
+            amount: parseFloat(document.getElementById('tAmount').value)
+        };
+        app.data.push(newItem);
+        
+        document.getElementById('tDesc').value = '';
+        document.getElementById('tAmount').value = '';
+        app.save();
+    },
+
+    deleteTransaction: (id) => {
+        if(confirm('¿Eliminar registro?')) {
+            app.data = app.data.filter(x => x.id !== id);
+            app.deleted.push(id);
+            app.save();
+        }
+    },
+
+    // --- LÓGICA DE DEUDAS ---
+    addDebt: (e) => {
+        e.preventDefault();
+        const newDebt = {
+            id: Date.now(),
+            name: document.getElementById('dName').value,
+            total: parseFloat(document.getElementById('dTotal').value),
+            paid: 0,
+            status: 'active',
+            updatedAt: Date.now()
+        };
+        app.debts.push(newDebt);
+        document.getElementById('dName').value = '';
+        document.getElementById('dTotal').value = '';
+        app.save();
+        app.renderDebts();
+    },
+
+    openPayModal: (id) => {
+        const debt = app.debts.find(d => d.id === id);
+        if(!debt) return;
+        document.getElementById('payDebtId').value = id;
+        document.getElementById('payAmount').value = ''; 
+        // Bootstrap Modal
+        new bootstrap.Modal(document.getElementById('paymentModal')).show();
+    },
+
+    processPayment: () => {
+        const id = parseInt(document.getElementById('payDebtId').value);
+        const amount = parseFloat(document.getElementById('payAmount').value);
+        const createExpense = document.getElementById('payCreateExpense').checked;
+        
+        if(!amount || amount <= 0) return alert("Ingrese un monto válido");
+
+        // 1. Actualizar Deuda
+        const debtIndex = app.debts.findIndex(d => d.id === id);
+        if(debtIndex === -1) return;
+        {
+            app.debts[debtIndex].paid += amount;
+            app.debts[debtIndex].updatedAt = Date.now();
+            if(app.debts[debtIndex].paid >= app.debts[debtIndex].total) {
+                app.debts[debtIndex].status = 'paid';
+                alert("¡Felicitaciones! Has saldado esta deuda.");
+            }
+        }
+
+        // 2. Crear Gasto (Opcional)
+        if(createExpense) {
+            const debtName = app.debts[debtIndex].name;
+            app.data.push({
+                id: Date.now(),
+                date: localISO(),
+                type: 'gasto',
+                cat: 'Deuda (Cuota)',
+                desc: `Abono a: ${debtName}`,
+                amount: amount
+            });
+        }
+
+        app.save();
+        
+        // Cerrar Modal
+        const modalEl = document.getElementById('paymentModal');
+        const modal = bootstrap.Modal.getInstance(modalEl);
+        modal.hide();
+    },
+
+    deleteDebt: (id) => {
+        if(confirm("¿Borrar esta deuda del registro? (No borrará los gastos asociados)")) {
+            app.debts = app.debts.filter(d => d.id !== id);
+            app.deleted.push(id);
+            app.save();
+        }
+    },
+
+    renderDebts: () => {
+        const container = document.getElementById('debtsList');
+        const activeDebts = app.debts.filter(d => d.status === 'active');
+        const fmt = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 });
+
+        // KPI Total Pendiente
+        const totalPending = activeDebts.reduce((acc, d) => acc + (d.total - d.paid), 0);
+        document.getElementById('totalDebtPending').innerText = fmt.format(totalPending);
+
+        if(activeDebts.length === 0) {
+            container.innerHTML = '<div class="text-center text-muted py-5"><i class="bi bi-check-circle fs-1"></i><br>¡Estás libre de deudas registradas!</div>';
+            return;
+        }
+
+        container.innerHTML = activeDebts.map(d => {
+            const pending = d.total - d.paid;
+            const progress = (d.paid / d.total) * 100;
+            return `
+            <div class="card bg-dark border-secondary">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h5 class="card-title fw-bold text-info mb-0">${esc(d.name)}</h5>
+                            <small class="text-muted">Total Inicial: ${fmt.format(d.total)}</small>
+                        </div>
+                        <div class="text-end">
+                            <span class="badge bg-danger mb-1">Pendiente: ${fmt.format(pending)}</span><br>
+                            <button onclick="app.openPayModal(${d.id})" class="btn btn-sm btn-outline-success py-0 px-2 mt-1">Abonar</button>
+                            <button onclick="app.deleteDebt(${d.id})" class="btn btn-sm btn-outline-secondary py-0 px-2 mt-1"><i class="bi bi-trash"></i></button>
+                        </div>
+                    </div>
+                    <div class="progress mt-2" style="height: 12px;">
+                        <div class="progress-bar bg-success progress-bar-striped" style="width: ${progress}%"></div>
+                    </div>
+                    <div class="d-flex justify-content-between mt-1 text-xs text-muted">
+                        <span>Pagado: ${fmt.format(d.paid)}</span>
+                        <span>${progress.toFixed(1)}%</span>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+    },
+
+    // --- RENDER GENERAL ---
+    render: () => {
+        const fmt = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 });
+
+        if(app.currentView === 'debts') {
+            app.renderDebts();
+            return; 
+        }
+
+        if(app.currentView === 'monthly') {
+            const filter = document.getElementById('filterMonth').value;
+            const filtered = app.data.filter(x => x.date.startsWith(filter)).sort((a,b) => new Date(b.date) - new Date(a.date));
+
+            // Tabla
+            document.getElementById('dataTable').innerHTML = filtered.map(x => `
+                <tr>
+                    <td class="text-white-50 font-monospace">${x.date.slice(8)}</td>
+                    <td><span class="badge ${x.type==='ingreso'?'bg-success':(x.type==='deduccion'?'bg-danger':'bg-warning text-dark')}">${esc(x.cat)}</span></td>
+                    <td>${esc(x.desc)}</td>
+                    <td class="text-end fw-bold font-monospace">${fmt.format(x.amount)}</td>
+                    <td class="text-end"><button onclick="app.deleteTransaction(${x.id})" class="btn btn-sm btn-outline-danger border-0 py-0">x</button></td>
+                </tr>
+            `).join('');
+
+            // KPIs
+            const sum = (t) => filtered.filter(x => x.type === t).reduce((a,b) => a + b.amount, 0);
+            const ing = sum('ingreso'); const ded = sum('deduccion'); const gas = sum('gasto');
+            document.getElementById('kpiIng').innerText = fmt.format(ing);
+            document.getElementById('kpiDed').innerText = fmt.format(ded);
+            document.getElementById('kpiGas').innerText = fmt.format(gas);
+            document.getElementById('kpiNet').innerText = fmt.format((ing - ded) - gas);
+
+            // Chart
+            app.renderMonthlyChart(filtered);
+        }
+
+        if(app.currentView === 'annual') {
+            app.renderAnnualReport(fmt);
+        }
+    },
+
+    renderMonthlyChart: (data) => {
+        const ctx = document.getElementById('monthlyChart');
+        const gastos = data.filter(x => x.type === 'gasto');
+        
+        // Agrupar
+        const grouped = gastos.reduce((acc, curr) => {
+            acc[curr.cat] = (acc[curr.cat] || 0) + curr.amount;
+            return acc;
+        }, {});
+
+        if (app.monthlyChart) app.monthlyChart.destroy();
+        app.monthlyChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: Object.keys(grouped),
+                datasets: [{
+                    data: Object.values(grouped),
+                    // Usando los colores que tenías o similares
+                    backgroundColor: ['#3b82f6', '#ef4444', '#f59e0b', '#10b981', '#6366f1', '#8b5cf6', '#dc3545', '#198754'],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: window.innerWidth < 768 ? 'bottom' : 'right', labels: { color: '#fff', font:{size:11} } } }
+            }
+        });
+    },
+
+    renderAnnualReport: (fmt) => {
+        // 1. Agrupar datos por mes
+        const monthlyData = {};
+        app.data.forEach(x => {
+            const mes = x.date.slice(0, 7); // "YYYY-MM"
+            if (!monthlyData[mes]) monthlyData[mes] = { ing:0, ded:0, gas:0, net:0 };
+            
+            if (x.type === 'ingreso') monthlyData[mes].ing += x.amount;
+            else if (x.type === 'deduccion') monthlyData[mes].ded += x.amount;
+            else monthlyData[mes].gas += x.amount;
+        });
+
+        // 2. Convertir a Array y Ordenar Cronológicamente
+        const sortedMonths = Object.keys(monthlyData).sort();
+        
+        let acumulado = 0;
+        const labels = [];
+        const dataIng = [];
+        const dataGas = [];
+        const dataAcum = [];
+        let htmlRows = '';
+
+        sortedMonths.forEach(mes => {
+            const d = monthlyData[mes];
+            const netMes = (d.ing - d.ded) - d.gas;
+            acumulado += netMes;
+
+            // Datos para gráfico
+            labels.push(mes);
+            dataIng.push(d.ing - d.ded); // Ingreso Neto (Ingreso - Deducciones)
+            dataGas.push(d.gas);
+            dataAcum.push(acumulado);
+
+            // Fila HTML
+            const rowClass = netMes < 0 ? 'text-danger fw-bold' : 'text-success';
+            const accumClass = acumulado < 0 ? 'text-danger' : 'text-info';
+            
+            htmlRows += `
+                <tr>
+                    <td class="font-monospace">${mes}</td>
+                    <td class="text-success opacity-75">${fmt.format(d.ing)}</td>
+                    <td class="text-danger opacity-75">-${fmt.format(d.ded)}</td>
+                    <td class="text-warning opacity-75">-${fmt.format(d.gas)}</td>
+                    <td class="${rowClass}">${fmt.format(netMes)}</td>
+                    <td class="font-monospace fs-6 ${accumClass} border-start border-secondary" style="background: rgba(255,255,255,0.05)">${fmt.format(acumulado)}</td>
+                </tr>
+            `;
+        });
+
+        document.getElementById('annualTable').innerHTML = htmlRows;
+
+        // Render Chart Mixto (Combinando Barras y Línea)
+        const ctx = document.getElementById('annualChart');
+        if (app.annualChart) app.annualChart.destroy();
+
+        app.annualChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Saldo Acumulado (Ahorro Real)',
+                        type: 'line',
+                        data: dataAcum,
+                        borderColor: '#0dcaf0',
+                        borderWidth: 3,
+                        tension: 0.3,
+                        pointBackgroundColor: '#fff',
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Ingresos Netos',
+                        data: dataIng,
+                        backgroundColor: 'rgba(25, 135, 84, 0.6)', // Verde oscuro
+                        borderColor: '#198754',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Gastos',
+                        data: dataGas,
+                        backgroundColor: 'rgba(255, 193, 7, 0.6)', // Amarillo/Mostaza
+                        borderColor: '#ffc107',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    x: { ticks: { color: '#cbd5e1' } },
+                    y: { ticks: { color: '#cbd5e1' }, grid: { color: '#334155' } }
+                },
+                plugins: { legend: { labels: { color: '#fff' } } }
+            }
+        });
+    },
+
+    // TOOLS (Backup mejorado para incluir DEUDAS)
+    // Botón "Guardar": en celular abre la hoja de compartir (Guardar en Archivos -> iCloud Drive -> Reemplazar)
+    downloadJSON: async () => {
+        const file = new File([JSON.stringify(app.snapshot(), null, 2)], 'backup_finanzas.json', { type: 'application/json' });
+        const markSynced = () => { app.meta.lastSync = Date.now(); app.persist(); };
+        const isTouch = window.matchMedia('(pointer: coarse)').matches;
+
+        if (isTouch && navigator.canShare && navigator.canShare({ files: [file] })) {
+            try {
+                await navigator.share({ files: [file] });
+                return markSynced();
+            } catch (err) {
+                if (err.name === 'AbortError') return; // El usuario canceló
+            }
+        }
+        const url = URL.createObjectURL(file);
+        const a = document.createElement('a');
+        a.href = url; a.download = file.name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        markSynced();
+    },
+
+    // Cargar un JSON elegido a mano y COMBINARLO con lo que hay en este dispositivo
+    uploadJSON: (input) => {
+        const file = input.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const fileIsCurrent = app.applyRemote(e.target.result);
+                if (fileIsCurrent) app.meta.lastSync = Date.now();
+                else app.meta.lastChange = Date.now();
+                app.persist();
+                alert(fileIsCurrent
+                    ? 'Datos cargados. Este dispositivo está al día con el archivo.'
+                    : 'Datos combinados. Este dispositivo tiene cambios que no están en el archivo: toca "Guardar" para actualizar el JSON en iCloud.');
+            } catch(err) { alert("Error: Archivo de backup no válido."); }
+            input.value = ''; // Permite volver a elegir el mismo archivo
+        };
+        reader.readAsText(file);
+    },
+
+    exportExcel: () => {
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(app.data), "Transacciones");
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(app.debts), "Deudas");
+        XLSX.writeFile(wb, "Reporte_Financiero_v3.1.xlsx");
+    }
+};
+
+// Necesario para que el Modal funcione con Bootstrap
+document.addEventListener('DOMContentLoaded', () => {
+    if(typeof bootstrap === 'undefined') {
+        const script = document.createElement('script');
+        script.src = "https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js";
+        document.body.appendChild(script);
+    }
+    app.init();
+});
+
+// App instalable: guarda la página y sus librerías para abrir sin internet (solo cuando está publicada)
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+    navigator.serviceWorker.register('sw.js').catch(err => console.warn('Sin modo offline:', err));
+}
+</script>
+</body>
+</html>
